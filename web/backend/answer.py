@@ -249,8 +249,81 @@ class FileCitation(BaseModel):
     span_url: str | None = None
 
 
+class DerivedResult(BaseModel):
+    """A numeric or short value the agent computed or predicted from a cited call."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: float | int | str = Field(
+        description="The computed or predicted value.",
+        examples=[2.592, "GTVp"],
+    )
+    unit: str | None = Field(
+        default=None,
+        description="Unit for value when it is a measurement.",
+        examples=["cm³", "Gy", "voxels"],
+    )
+
+
+class DerivedCitation(BaseModel):
+    """A calculation or prediction the agent derived from a describe or fetch call.
+
+    Use when the claim is not what the file shows directly, but a number or label
+    produced from that call (for example voxel volume from a volume fetch, or a
+    model score). Cite the call that supplied the inputs. method is plain prose a
+    reviewer can read on the card.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [
+            {
+                "kind": "derived",
+                "cite": "c5",
+                "method": (
+                    "Voxel count on the GTVp label map from the RTSTRUCT volume fetch "
+                    "(roi=GTVp, spacing 2×2×2 mm), multiplied by voxel volume and "
+                    "converted to cm³."
+                ),
+                "summary": "GTVp volume is 2.592 cm³ on the resampled label map.",
+                "result": {"value": 2.592, "unit": "cm³"},
+            },
+        ]},
+    )
+
+    kind: Literal["derived"]
+    cite: str = Field(description=CITE_DESCRIPTION, examples=["c5"])
+    method: str = Field(
+        description=(
+            "Plain-language description of how the value was obtained: the input call, "
+            "ROI or series, resampling or model, and the arithmetic or prediction step. "
+            "Write one or two sentences a reviewer can read without opening code."
+        ),
+        examples=[
+            (
+                "Voxel count on the GTVp label map from the RTSTRUCT volume fetch "
+                "(roi=GTVp, spacing 2×2×2 mm), multiplied by voxel volume and converted to cm³."
+            ),
+        ],
+    )
+    summary: str = Field(description=SUMMARY_DESCRIPTION)
+    result: DerivedResult | None = Field(
+        default=None,
+        description="Optional structured value and unit for the badge and card.",
+    )
+    detail: str | None = Field(
+        default=None,
+        description="Optional extra steps, assumptions, or intermediate numbers.",
+    )
+    inputs: list[str] | None = Field(
+        default=None,
+        description="Optional short labels for inputs used (ROI name, sandbox path, series id).",
+        examples=[["GTVp", "inputs/volume.nii.gz"]],
+    )
+
+
 Citation = Annotated[
-    ImagingCitation | NoteCitation | TableCitation | FileCitation,
+    ImagingCitation | NoteCitation | TableCitation | FileCitation | DerivedCitation,
     Field(discriminator="kind"),
 ]
 
@@ -281,6 +354,10 @@ class CitedAnswer(BaseModel):
                     _example(ImagingCitation, 1),
                     _example(NoteCitation),
                 ],
+            },
+            {
+                "response": "GTVp volume is 2.592 cm³ [cite:c5].",
+                "citations": [_example(DerivedCitation)],
             },
             {
                 "response": "Treatment finished on 13 February [cite:1].",
@@ -400,20 +477,29 @@ def shape_problem(citation: dict, call: dict | None) -> str | None:
     """Why this citation does not fit the schema for its kind, or None.
 
     A citation without kind gets the kind of the call its token came from, or file
-    when it has no token. Fields the server fills in on a cited call are ignored.
+    when it has no token. ``derived`` is allowed on any cite token: the claim is a
+    calculation or prediction from that call, not the call's native kind. Fields the
+    server fills in on a cited call are ignored.
     """
     handle = citation.get("cite")
     marker = handle or citation.get("id")
     expected = kind_for(call) if handle else "file"
     given = citation.get("kind")
 
-    if given is not None and expected is not None and given != expected:
+    if given == "derived":
+        if not handle:
+            return (
+                f"citation {marker} has kind 'derived', but derived citations "
+                "need a cite token from the call that supplied the inputs"
+            )
+        kind = "derived"
+    elif given is not None and expected is not None and given != expected:
         return (
             f"citation {marker} has kind {given!r}, but {handle or marker} "
             f"came from a call whose kind is {expected!r}"
         )
-
-    kind = given or expected
+    else:
+        kind = given or expected
 
     if kind is None:
         return None

@@ -119,7 +119,7 @@ class AgentClient:
 class Conversation:
     """Messages exchanged with the agent for one piece of work, including tool calls."""
 
-    MAX_STEPS = 8
+    MAX_STEPS = 16
 
     def __init__(
         self,

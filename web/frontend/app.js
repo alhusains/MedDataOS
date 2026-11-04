@@ -932,6 +932,9 @@ function removeFile() {
 }
 
 function citationLabel(labels, agent, citation) {
+    if (citation && citation.kind === 'derived') {
+        return labels === agentCardLabels ? 'Derived result' : 'Derived';
+    }
     if (!agent) {
         if (citation && dicomPreviews(citation).length) return 'Imaging';
         if (citation && dicomRecord(citation)?.metadata) return 'DICOM';
@@ -939,6 +942,34 @@ function citationLabel(labels, agent, citation) {
         return 'Source';
     }
     return labels[agent] || String(agent).replace(/_/g, ' ');
+}
+
+function derivedResultText(citation) {
+    const result = citation && citation.result;
+    if (!result || result.value == null || result.value === '') return '';
+    const value = String(result.value);
+    return result.unit ? `${value} ${result.unit}` : value;
+}
+
+function renderDerivedBlock(citation, compact) {
+    if (!citation || citation.kind !== 'derived') return '';
+    const parts = [];
+    const resultText = derivedResultText(citation);
+    if (resultText) {
+        parts.push(`<div class="derived-result${compact ? ' derived-result-compact' : ''}">${escapeHtml(resultText)}</div>`);
+    }
+    if (citation.method) {
+        parts.push(`<div class="derived-method">${escapeHtml(citation.method)}</div>`);
+    }
+    if (!compact && citation.detail) {
+        parts.push(`<div class="derived-detail">${escapeHtml(citation.detail)}</div>`);
+    }
+    if (!compact && Array.isArray(citation.inputs) && citation.inputs.length) {
+        parts.push(
+            `<ul class="derived-inputs">${citation.inputs.map(item => `<li>${escapeHtml(String(item))}</li>`).join('')}</ul>`
+        );
+    }
+    return parts.length ? `<div class="derived-block">${parts.join('')}</div>` : '';
 }
 
 // Agent ID → short display label for citation badges
@@ -1398,6 +1429,7 @@ async function showCitationPopup(anchor, citation) {
     const dicomHTML = type === 'dicom' && dicomPreview
         ? `<div class="dicom-caption">${escapeHtml(dicomCaption(dicomPreview))}</div>`
         : '';
+    const derivedHTML = renderDerivedBlock(citation, true);
 
     citationPopup.innerHTML = `
         <div class="card-header">
@@ -1406,6 +1438,7 @@ async function showCitationPopup(anchor, citation) {
         </div>
         ${contentHTML ? `<div class="${contentClass}" id="card-content-inner">${contentHTML}</div>` : '<div id="card-content-inner"></div>'}
         ${dicomHTML}
+        ${derivedHTML}
         <div class="card-summary">${summaryHTML}</div>
         ${renderNotesConflicts(notesConflictsToShow(citation), true)}
         ${conflictHTML}
@@ -1988,7 +2021,9 @@ async function openCitationModal(citation, pin = null, focusSpanUrl = null) {
 
     // ── Build body content ───────────────────────────────────
     let contentHTML = '';
-    if (type === 'dicom') {
+    if (citation.kind === 'derived') {
+        contentHTML = renderDerivedBlock(citation, false);
+    } else if (type === 'dicom') {
         const figures = dicomPreviews(citation).map((preview, index, all) => {
             const main = index === all.length - 1 ? ' dicom-preview-main' : '';
             return `<figure class="dicom-figure${main}"><img class="dicom-preview" src="${dicomPreviewSrc(citation, preview)}" alt="${escapeHtml(agentLabel)}"><figcaption>${escapeHtml(dicomCaption(preview))}</figcaption></figure>`;
@@ -2007,7 +2042,7 @@ async function openCitationModal(citation, pin = null, focusSpanUrl = null) {
     modalBody.innerHTML = contentHTML;
 
     // ── Summary or Checklist ────────────────────────
-    const checklistItems = parseSummaryToChecklist(citation.summary);
+    const checklistItems = citation.kind === 'derived' ? null : parseSummaryToChecklist(citation.summary);
     if (checklistItems) {
         const reviewKey = citation.agent + '|' + citation.web_path;
         const checklist_state = (patientReviews[activePatientId] || {})[reviewKey] || {};
@@ -2054,7 +2089,9 @@ async function openCitationModal(citation, pin = null, focusSpanUrl = null) {
     citationModal.classList.add('open');
 
     // Fetch text-based content
-    if (hasNotesEvidence(citation)) {
+    if (citation.kind === 'derived') {
+        // Method/result already rendered in the body; no file load.
+    } else if (hasNotesEvidence(citation)) {
         renderNotesModalBody(citation, focusSpanUrl);
     } else if (type === 'csv' || type === 'text') {
         try {

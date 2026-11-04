@@ -1332,6 +1332,7 @@ def test_every_answer_schema_example_is_valid():
         answer.NoteCitation,
         answer.TableCitation,
         answer.FileCitation,
+        answer.DerivedCitation,
         answer.CitedAnswer,
     ):
         for example in model.model_config["json_schema_extra"]["examples"]:
@@ -1366,7 +1367,13 @@ def test_the_strict_answer_schema_uses_only_what_strict_mode_accepts():
             walk(list(value.values()) if key in ("properties", "$defs") else value)
 
     walk(schema)
-    assert set(schema["$defs"]) >= {"ImagingCitation", "NoteCitation", "TableCitation"}
+    assert set(schema["$defs"]) >= {
+        "ImagingCitation",
+        "NoteCitation",
+        "TableCitation",
+        "DerivedCitation",
+        "DerivedResult",
+    }
 
 
 def test_a_dicom_call_must_be_cited_as_imaging():
@@ -1400,6 +1407,70 @@ def test_a_dicom_call_must_be_cited_as_imaging():
     with_evidence = problem({"evidence": [{"claim": "Tumour", "quote": "glottic"}]})
     assert "evidence is not allowed" in with_evidence
     assert "that note's own fetch" in with_evidence
+
+
+def test_a_volume_call_may_be_cited_as_derived():
+    sys.path.insert(0, str(APP / "web" / "backend"))
+    from case import Answer
+
+    calls = {
+        "c5": {
+            "tool": "fetch",
+            "arguments": {
+                "resource_id": "dicom:rtstruct",
+                "view": "volume",
+                "roi": "GTVp",
+                "spacing": [2, 2, 2],
+            },
+            "modality": "dicom",
+            "file": "rtstruct",
+            "web_path": "/case/rtstruct",
+        },
+    }
+
+    def problem(citation: dict) -> str | None:
+        text = json.dumps({
+            "response": "GTVp volume is 2.592 cm³ [cite:c5].",
+            "citations": [citation],
+        })
+        return Answer(text, [], [], calls).problem
+
+    assert problem({
+        "kind": "derived",
+        "cite": "c5",
+        "method": (
+            "Voxel count on the GTVp label map from the RTSTRUCT volume fetch "
+            "(roi=GTVp, spacing 2×2×2 mm), multiplied by voxel volume and converted to cm³."
+        ),
+        "summary": "GTVp volume is 2.592 cm³ on the resampled label map.",
+        "result": {"value": 2.592, "unit": "cm³"},
+    }) is None
+
+    # Volume is still a DICOM fetch; imaging remains valid. derived is optional.
+    assert problem({
+        "kind": "imaging",
+        "cite": "c5",
+        "summary": "RTSTRUCT volume mask for GTVp at 2 mm spacing.",
+    }) is None
+
+    assert problem({
+        "cite": "c5",
+        "summary": "RTSTRUCT volume mask for GTVp at 2 mm spacing.",
+    }) is None
+
+    missing_method = problem({
+        "kind": "derived",
+        "cite": "c5",
+        "summary": "GTVp volume is 2.592 cm³.",
+    })
+    assert missing_method and "method" in missing_method
+
+    as_note = problem({
+        "kind": "note",
+        "cite": "c5",
+        "summary": "GTVp volume is 2.592 cm³.",
+    })
+    assert as_note and "kind 'note'" in as_note and "'imaging'" in as_note
 
 
 def test_a_span_fetch_is_attached_to_the_citation():
