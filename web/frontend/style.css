@@ -158,6 +158,31 @@ header::after {
     gap: 14px;
 }
 
+.org-logos {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 44px;
+    padding: 4px 12px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+
+.org-logos img {
+    display: block;
+    height: 28px;
+    width: auto;
+    object-fit: contain;
+}
+
+.org-logos-rule {
+    width: 1px;
+    align-self: stretch;
+    margin: 6px 0;
+    background: var(--border-warm);
+}
+
 /* ─── Header Left (toggle + logo) ──────────────────────────── */
 .header-left {
     display: flex;
